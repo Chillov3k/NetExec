@@ -119,7 +119,7 @@ class NXCModule:
                 self.false_positive = {".", "..", "desktop.ini", "Public", "Default", "Default User", "All Users"}
 
         def list_users(self, share: str):
-            """Get users from remote host via C:\\Users"""
+            """Get users from remote host via C:/Users"""
             script = r"""
             $ErrorActionPreference="SilentlyContinue"
             Get-ChildItem -LiteralPath 'C:\Users' -Force -Directory | Select-Object -ExpandProperty Name
@@ -130,7 +130,7 @@ class NXCModule:
             return [n for n in names if n not in self.false_positive]
 
         def remote_list_dir(self, share, path, wildcard=True):
-            """Enumeration of directory C:\ """
+            """Enumeration of directory C:/"""
             script = r"""
             param([string]$Rel,[bool]$Wildcard=$true)
             $ErrorActionPreference="SilentlyContinue"
@@ -151,7 +151,7 @@ class NXCModule:
                 s = str(line).strip()
                 if not s:
                     continue
-                kind, name = (s.split("|", 1) + [""])[:2]
+                kind, name = ([*s.split("|", 1), ""])[:2]
                 is_dir = kind == "D"
                 entries.append(NXCModule._FakeSharedEntry(name=name, is_dir=is_dir))
             return entries
